@@ -1,9 +1,16 @@
-#API KEY, 계좌번호와 같은 설정을 넣음
+#01. API KEY, 계좌번호와 같은 설정을 넣음
 
-APP_KEY = "PSNiT1wFqQ7IQBfL0qf4KC815B4TX4pkd4Yp"
-APP_SECRET = "PqlmmKQTHPAR2uane9h7ZekyOF5P7eK3TSE5zMgHSz6QSc92BdD/kDfaVYPtChqco5LbBIrSS9JvqetiTduMpx0Ugok78cGR1Ss2lM8LseJkvNQivIIEY2u/fCW7qEIIVApL7h6V1mZtXmw6xoxS4hLUxYOgbE8iDmt61xzVKuKKDXfQsa0="
+import os
+from dotenv import load_dotenv
 
-ACCOUNT = "50172885"
-ACCOUNT_CODE = "01"
+load_dotenv()
+
+APP_KEY = os.getenv("APP_KEY")
+APP_SECRET = os.getenv("APP_SECRET")
+
+ACCOUNT = os.getenv("ACCOUNT")
+ACCOUNT_CODE = os.getenv("ACCOUNT_CODE")
 
 BASE_URL = "https://openapivts.koreainvestment.com"  # 모의투자
+
+TICKER = "005930"  # 삼성전자
