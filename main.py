@@ -1,7 +1,7 @@
 import time
 
 from api import get_token
-from data import get_price
+from data import get_price, get_prev_close
 from strategy import check_signal
 from trade import buy_stock, sell_stock
 
@@ -9,7 +9,7 @@ ticker = "005930"
 
 token = get_token()
 
-base_price = get_price(token, ticker)
+base_price = get_prev_close(token, ticker)
 
 holding = False
 
