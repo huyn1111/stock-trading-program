@@ -11,6 +11,6 @@ APP_SECRET = os.getenv("APP_SECRET")
 ACCOUNT = os.getenv("ACCOUNT")
 ACCOUNT_CODE = os.getenv("ACCOUNT_CODE")
 
-BASE_URL = "https://openapivts.koreainvestment.com"  # 모의투자
+BASE_URL = "https://openapivts.koreainvestment.com:29443"  # 모의투자
 
 TICKER = "005930"  # 삼성전자
