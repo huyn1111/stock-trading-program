@@ -1,5 +1,6 @@
 # 06. 실제 매수/매도 주문 실행
 
+import time
 import requests
 from config import BASE_URL, APP_KEY, APP_SECRET, ACCOUNT, ACCOUNT_CODE
 
@@ -24,14 +25,22 @@ def _order(token, ticker, is_buy, qty=1):
         "ORD_UNPR": "0"         # 시장가일 때 0
     }
 
-    res = requests.post(url, headers=headers, json=body)
-    result = res.json()
+    for attempt in range(3):
+        time.sleep(0.5)  # API 호출 간격 확보
+        res = requests.post(url, headers=headers, json=body)
+        result = res.json()
 
-    if result.get("rt_cd") == "0":
-        action = "매수" if is_buy else "매도"
-        print(f"{action} 주문 성공 | {ticker} {qty}주 | 주문번호: {result['output']['ODNO']}")
-    else:
-        print(f"주문 실패: {result.get('msg1')}")
+        if result.get("rt_cd") == "0":
+            action = "매수" if is_buy else "매도"
+            print(f"{action} 주문 성공 | {ticker} {qty}주 | 주문번호: {result['output']['ODNO']}")
+            return result
+
+        if "초당" in result.get("msg1", ""):
+            print(f"API 호출 제한, 재시도 중... ({attempt + 1}/3)")
+            time.sleep(1)
+        else:
+            print(f"주문 실패: {result.get('msg1')}")
+            return result
 
     return result
 
