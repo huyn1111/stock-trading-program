@@ -32,5 +32,3 @@ def get_balance(token):
     res = requests.get(url, headers=headers, params=params)
 
     return res.json()
-    "cash": 10000000
-    "stocks": {}
