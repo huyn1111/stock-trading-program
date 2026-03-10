@@ -4,6 +4,7 @@ from api import get_token
 from data import get_price, get_prev_close
 from strategy import check_signal
 from trade import buy_stock, sell_stock
+from account import is_holding
 
 ticker = "005930"
 
@@ -11,7 +12,7 @@ token = get_token()
 
 base_price = get_prev_close(token, ticker)
 
-holding = False
+holding = is_holding(token, ticker)  # 시작 시 실제 보유 여부 자동 확인
 
 print("기준가격:", base_price)
 
