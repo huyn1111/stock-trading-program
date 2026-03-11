@@ -6,7 +6,7 @@ from strategy import check_signal
 from trade import buy_stock, sell_stock
 from account import is_holding
 
-ticker = "005930"
+ticker = "005930"  # 삼성전자
 
 token = get_token()
 
