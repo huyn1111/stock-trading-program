@@ -26,7 +26,18 @@ holdings = get_holdings(token, list(TICKERS.keys()))
 for ticker, name in TICKERS.items():
     print(f"[{name}] 기준가격: {base_prices[ticker]}, 보유: {holdings[ticker]}")
 
+last_print_time = 0  # 마지막 현재가 출력 시각
+
 while True:
+
+    now = time.time()
+    if now - last_print_time >= 600:  # 10분마다 현재가 출력
+        for ticker, name in TICKERS.items():
+            price = get_price(token, ticker)
+            if price:
+                print(f"[현재가] {name}: {price:,}원")
+            time.sleep(0.5)
+        last_print_time = now
 
     hold_names = []
 
