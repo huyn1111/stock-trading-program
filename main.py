@@ -28,26 +28,35 @@ for ticker, name in TICKERS.items():
 
 while True:
 
+    hold_names = []
+
     for ticker, name in TICKERS.items():
 
         price = get_price(token, ticker)
 
         if price is None:
             print(f"[{name}] 가격 조회 실패")
+            time.sleep(1)
             continue
 
         signal = check_signal(base_prices[ticker], price, holdings[ticker])
 
-        print(f"[{name}] 현재가: {price}, 신호: {signal}")
-
         if signal == "BUY" and not holdings[ticker]:
+            print(f"[{name}] 현재가: {price}, 신호: {signal}")
             buy_stock(token, ticker)
             holdings[ticker] = True
 
         elif signal in ["SELL", "STOP_LOSS"] and holdings[ticker]:
+            print(f"[{name}] 현재가: {price}, 신호: {signal}")
             sell_stock(token, ticker)
             holdings[ticker] = False
 
+        else:
+            hold_names.append(name)
+
         time.sleep(1)  # 종목 간 API 호출 간격
+
+    if hold_names:
+        print(f"[{', '.join(hold_names)}] : HOLD")
 
     time.sleep(10)
