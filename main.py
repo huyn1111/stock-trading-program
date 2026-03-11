@@ -33,12 +33,13 @@ while True:
 
     now = time.time()
     if now - last_print_time >= 600:  # 10분마다 현재가 출력
+        time.sleep(1)  # 메인 루프 마지막 호출과 간격 확보
         now_str = datetime.now().strftime("%H:%M")
         for ticker, name in TICKERS.items():
             price = get_price(token, ticker)
             if price:
                 print(f"[{now_str}] {name}: {price:,}원")
-            time.sleep(0.5)
+            time.sleep(1)
         last_print_time = now
 
     hold_names = []
