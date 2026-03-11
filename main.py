@@ -4,7 +4,7 @@ from api import get_token
 from data import get_price, get_prev_close
 from strategy import check_signal
 from trade import buy_stock, sell_stock
-from account import is_holding
+from account import get_holdings
 
 TICKERS = {
     "005930": "삼성전자",
@@ -14,13 +14,16 @@ TICKERS = {
 
 token = get_token()
 
-# 종목별 기준가격, 보유여부 초기화
+# 종목별 기준가격 초기화
 base_prices = {}
-holdings = {}
-
 for ticker, name in TICKERS.items():
     base_prices[ticker] = get_prev_close(token, ticker)
-    holdings[ticker] = is_holding(token, ticker)
+    time.sleep(0.5)  # API 호출 간격
+
+# 잔고 한 번만 조회해서 전체 보유여부 확인
+holdings = get_holdings(token, list(TICKERS.keys()))
+
+for ticker, name in TICKERS.items():
     print(f"[{name}] 기준가격: {base_prices[ticker]}, 보유: {holdings[ticker]}")
 
 while True:

@@ -34,16 +34,23 @@ def get_balance(token):
     return res.json()
 
 
-def is_holding(token, ticker):
-    """해당 종목을 현재 보유 중이면 True 반환"""
+def get_holdings(token, tickers):
+    """잔고를 한 번만 조회해서 여러 종목의 보유 여부를 딕셔너리로 반환"""
 
     data = get_balance(token)
     stocks = data.get("output1", [])
 
-    for stock in stocks:
-        if stock.get("pdno") == ticker and int(stock.get("hldg_qty", 0)) > 0:
-            print(f"보유 확인: {ticker} {stock['hldg_qty']}주")
-            return True
+    holdings = {ticker: False for ticker in tickers}
 
-    print(f"미보유 확인: {ticker}")
-    return False
+    for stock in stocks:
+        code = stock.get("pdno")
+        qty = int(stock.get("hldg_qty", 0))
+        if code in holdings and qty > 0:
+            holdings[code] = True
+            print(f"보유 확인: {code} {qty}주")
+
+    for ticker in tickers:
+        if not holdings[ticker]:
+            print(f"미보유 확인: {ticker}")
+
+    return holdings
