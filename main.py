@@ -6,35 +6,45 @@ from strategy import check_signal
 from trade import buy_stock, sell_stock
 from account import is_holding
 
-ticker = "005930"  # 삼성전자
+TICKERS = {
+    "005930": "삼성전자",
+    "000660": "SK하이닉스",
+    "079550": "LIG넥스원",
+}
 
 token = get_token()
 
-base_price = get_prev_close(token, ticker)
+# 종목별 기준가격, 보유여부 초기화
+base_prices = {}
+holdings = {}
 
-holding = is_holding(token, ticker)  # 시작 시 실제 보유 여부 자동 확인
-
-print("기준가격:", base_price)
+for ticker, name in TICKERS.items():
+    base_prices[ticker] = get_prev_close(token, ticker)
+    holdings[ticker] = is_holding(token, ticker)
+    print(f"[{name}] 기준가격: {base_prices[ticker]}, 보유: {holdings[ticker]}")
 
 while True:
 
-    price = get_price(token, ticker)
+    for ticker, name in TICKERS.items():
 
-    if price is None:
-        print("가격 조회 실패")
-        time.sleep(10)
-        continue
+        price = get_price(token, ticker)
 
-    signal = check_signal(base_price, price, holding)
+        if price is None:
+            print(f"[{name}] 가격 조회 실패")
+            continue
 
-    print("현재가:", price, "신호:", signal)
+        signal = check_signal(base_prices[ticker], price, holdings[ticker])
 
-    if signal == "BUY" and not holding:
-        buy_stock(token, ticker)
-        holding = True
+        print(f"[{name}] 현재가: {price}, 신호: {signal}")
 
-    elif signal in ["SELL", "STOP_LOSS"] and holding:
-        sell_stock(token, ticker)
-        holding = False
+        if signal == "BUY" and not holdings[ticker]:
+            buy_stock(token, ticker)
+            holdings[ticker] = True
+
+        elif signal in ["SELL", "STOP_LOSS"] and holdings[ticker]:
+            sell_stock(token, ticker)
+            holdings[ticker] = False
+
+        time.sleep(1)  # 종목 간 API 호출 간격
 
     time.sleep(10)
