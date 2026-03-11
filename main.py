@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 
 from api import get_token
 from data import get_price, get_prev_close
@@ -32,10 +33,11 @@ while True:
 
     now = time.time()
     if now - last_print_time >= 600:  # 10분마다 현재가 출력
+        now_str = datetime.now().strftime("%H:%M")
         for ticker, name in TICKERS.items():
             price = get_price(token, ticker)
             if price:
-                print(f"[현재가] {name}: {price:,}원")
+                print(f"[{now_str}] {name}: {price:,}원")
             time.sleep(0.5)
         last_print_time = now
 
