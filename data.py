@@ -1,5 +1,6 @@
 # 03. 주식 데이터 가져오기(현재가 조회 / 전날 종가 조회)
 
+import time
 import requests
 from config import BASE_URL, APP_KEY, APP_SECRET
 
@@ -20,8 +21,13 @@ def get_price(token, ticker):
     }
 
     res = requests.get(url, headers=headers, params=params)
+    data = res.json()
 
-    return int(res.json()["output"]["stck_prpr"])
+    if "output" not in data:
+        print(f"현재가 조회 실패: {data.get('msg1', data)}")
+        return None
+
+    return int(data["output"]["stck_prpr"])
 
 
 def get_prev_close(token, ticker):
@@ -43,7 +49,14 @@ def get_prev_close(token, ticker):
         "fid_period_div_code": "D"    # 일별
     }
 
-    res = requests.get(url, headers=headers, params=params)
+    for attempt in range(3):
+        res = requests.get(url, headers=headers, params=params)
+        data = res.json()
 
-    # output[0] = 오늘, output[1] = 전날
-    return int(res.json()["output"][1]["stck_clpr"])
+        if "output" in data:
+            return int(data["output"][1]["stck_clpr"])
+
+        print(f"전날 종가 조회 실패, 재시도 중... ({attempt + 1}/3): {data.get('msg1', data)}")
+        time.sleep(1)
+
+    return None

@@ -19,7 +19,9 @@ def get_token():
     }
 
     res = requests.post(url, headers=headers, json=body)
+    data = res.json()
 
-    token = res.json()["access_token"]
+    if "access_token" not in data:
+        raise Exception(f"토큰 발급 실패: {data}")
 
-    return token
+    return data["access_token"]
