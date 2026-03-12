@@ -12,7 +12,7 @@ import argparse
 from api import get_token
 from backtest.data_loader import load_ohlcv
 from backtest.engine import run
-from backtest.report import print_result, print_comparison
+from backtest.report import print_comparison
 from strategies.volatility_breakout import VolatilityBreakoutStrategy
 
 TICKERS = {
@@ -30,7 +30,9 @@ def parse_args():
     parser.add_argument("--ticker",  nargs="+", default=list(TICKERS.keys()), help="종목코드")
     parser.add_argument("--start",   default="20240101", help="시작일 YYYYMMDD")
     parser.add_argument("--end",     default="20251231", help="종료일 YYYYMMDD")
-    parser.add_argument("--k",       nargs="+", type=float, default=[0.5], help="변동성 돌파 k값")
+    parser.add_argument("--k",       nargs="+", type=float,
+                        default=[round(x * 0.1, 1) for x in range(1, 10)],
+                        help="변동성 돌파 k값 (기본: 0.1~0.9)")
     parser.add_argument("--cash",    type=int,  default=10_000_000, help="초기 자금")
     return parser.parse_args()
 
@@ -55,8 +57,6 @@ def main():
         for k in args.k:
             strategy = VolatilityBreakoutStrategy(k=k)
             result   = run(strategy, data, initial_cash=args.cash)
-
-            print_result(strategy.name, name, result)
 
             comparison.append({
                 "strategy": strategy.name,

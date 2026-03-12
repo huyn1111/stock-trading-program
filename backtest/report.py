@@ -2,6 +2,8 @@
 백테스트 결과 출력 및 전략 비교.
 """
 
+W = 70  # 표 전체 너비
+
 
 def print_result(strategy_name: str, ticker: str, result: dict):
     """단일 전략 결과 출력"""
@@ -26,49 +28,52 @@ def print_result(strategy_name: str, ticker: str, result: dict):
             print(f"  {t['date']}  매도  {t['price']:>8,}원  {t['qty']}주  ({sign}{t.get('profit', 0):,}원)")
 
 
+def _header_line():
+    return (
+        f"  {'k값':<8}"
+        f"{'주간평균수익률':>13}"
+        f"{'총수익률':>10}"
+        f"{'MDD':>9}"
+        f"{'승률':>7}"
+        f"{'매매횟수':>8}"
+    )
+
+
 def print_comparison(results: list[dict]):
     """
-    여러 전략/종목 비교 결과를 표로 출력.
+    종목별로 그룹핑하여 k값 비교 표 출력.
     results: [{"strategy": 전략명, "ticker": 종목명, "result": run() 반환값}, ...]
     """
 
-    col = {
-        "종목":         12,
-        "전략":         16,
-        "주간평균수익률": 13,
-        "총수익률":      10,
-        "MDD":          9,
-        "승률":         7,
-        "매매횟수":      7,
-    }
+    # 종목별로 그룹핑
+    grouped: dict[str, list] = {}
+    for item in results:
+        grouped.setdefault(item["ticker"], []).append(item)
 
-    header = (
-        f"  {'종목':<{col['종목']}}"
-        f"{'전략':<{col['전략']}}"
-        f"{'주간평균수익률':>{col['주간평균수익률']}}"
-        f"{'총수익률':>{col['총수익률']}}"
-        f"{'MDD':>{col['MDD']}}"
-        f"{'승률':>{col['승률']}}"
-        f"{'매매횟수':>{col['매매횟수']}}"
-    )
-    divider = "=" * len(header)
+    print(f"\n\n{'='*W}")
+    print(f"  [백테스트 결과 비교]  (변동성 돌파 전략, k값별)")
+    print(f"{'='*W}")
 
-    print(f"\n\n{divider}")
-    print(f"  [백테스트 결과 비교]")
-    print(divider)
-    print(header)
-    print("-" * len(header))
+    for ticker_name, items in grouped.items():
+        print(f"\n  ■ {ticker_name}")
+        print(f"  {'-'*(W-2)}")
+        print(_header_line())
+        print(f"  {'-'*(W-2)}")
 
-    for item in sorted(results, key=lambda x: x["result"]["total_return"], reverse=True):
-        r = item["result"]
-        print(
-            f"  {item['ticker']:<{col['종목']}}"
-            f"{item['strategy']:<{col['전략']}}"
-            f"{r['weekly_return']:>+{col['주간평균수익률']}.3f}%"
-            f"{r['total_return']:>+{col['총수익률']}.2f}%"
-            f"{r['mdd']:>{col['MDD']}.2f}%"
-            f"{r['win_rate']:>{col['승률']}.1f}%"
-            f"{r['trade_count']:>{col['매매횟수']}}회"
-        )
+        for item in sorted(items, key=lambda x: float(x["strategy"].split("=")[1].rstrip(")"))):
+            r   = item["result"]
+            k   = item["strategy"].split("=")[1].rstrip(")")
+            best_mark = " ★" if r["total_return"] == max(i["result"]["total_return"] for i in items) else ""
+            print(
+                f"  k={k:<6}"
+                f"{r['weekly_return']:>+12.3f}%"
+                f"{r['total_return']:>+9.2f}%"
+                f"{r['mdd']:>8.2f}%"
+                f"{r['win_rate']:>6.1f}%"
+                f"{r['trade_count']:>7}회"
+                f"{best_mark}"
+            )
 
-    print(divider)
+        print(f"  {'-'*(W-2)}")
+
+    print(f"\n{'='*W}")
