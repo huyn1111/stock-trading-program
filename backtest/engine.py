@@ -108,12 +108,18 @@ def run(strategy: BaseStrategy, data: list[dict], initial_cash: int = 10_000_000
 
     mdd = _calc_mdd(portfolio_values)
 
+    # 주간평균수익률: (1 + 총수익률)^(1/총주수) - 1
+    weeks = len(data) / 5
+    weekly_return = ((1 + total_return / 100) ** (1 / weeks) - 1) * 100 if weeks > 0 else 0
+
     return {
-        "trades":       trades,
-        "final_value":  round(final_value),
-        "total_return": round(total_return, 2),
-        "win_rate":     round(win_rate, 1),
-        "mdd":          round(mdd, 2)
+        "trades":         trades,
+        "final_value":    round(final_value),
+        "total_return":   round(total_return, 2),
+        "weekly_return":  round(weekly_return, 3),
+        "win_rate":       round(win_rate, 1),
+        "mdd":            round(mdd, 2),
+        "trade_count":    len(sell_trades)
     }
 
 

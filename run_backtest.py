@@ -2,7 +2,7 @@
 백테스트 실행 진입점.
 
 사용 예시:
-    python run_backtest.py                          # 기본 (3종목, k=0.5)
+    python run_backtest.py                          # 기본 (6종목, k=0.5, 2024~2025)
     python run_backtest.py --ticker 005930          # 삼성전자만
     python run_backtest.py --start 20240101 --end 20241231
     python run_backtest.py --k 0.3 0.5 0.7         # k값 비교
@@ -19,6 +19,9 @@ TICKERS = {
     "005930": "삼성전자",
     "000660": "SK하이닉스",
     "079550": "LIG넥스원",
+    "034020": "두산에너빌리티",
+    "086520": "에코프로",
+    "277810": "레인보우로보틱스",
 }
 
 
@@ -26,7 +29,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="백테스트 실행")
     parser.add_argument("--ticker",  nargs="+", default=list(TICKERS.keys()), help="종목코드")
     parser.add_argument("--start",   default="20240101", help="시작일 YYYYMMDD")
-    parser.add_argument("--end",     default="20241231", help="종료일 YYYYMMDD")
+    parser.add_argument("--end",     default="20251231", help="종료일 YYYYMMDD")
     parser.add_argument("--k",       nargs="+", type=float, default=[0.5], help="변동성 돌파 k값")
     parser.add_argument("--cash",    type=int,  default=10_000_000, help="초기 자금")
     return parser.parse_args()
