@@ -1,4 +1,4 @@
-# 05. 매매기준 (매매전략) - 10퍼 하락하면 사고, 10퍼 오르면 팔고, 15퍼 하락하면 손절
+# 05. 매매기준 (매매전략) - 5퍼 하락하면 사고, 5퍼 오르면 팔고, 15퍼 하락하면 손절
 
 def check_signal(base_price, current_price, holding):
 
@@ -6,7 +6,7 @@ def check_signal(base_price, current_price, holding):
 
     if not holding:
 
-        if change <= -0.10:
+        if change <= -0.05:
             return "BUY"
 
         else:
@@ -14,7 +14,7 @@ def check_signal(base_price, current_price, holding):
 
     else:
 
-        if change >= 0.10:
+        if change >= 0.05:
             return "SELL"
 
         elif change <= -0.15:

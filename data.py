@@ -30,8 +30,8 @@ def get_price(token, ticker):
     return int(data["output"]["stck_prpr"])
 
 
-def get_prev_close(token, ticker):
-    """전날 종가 반환"""
+def get_prev_avg(token, ticker):
+    """전날 시가/고가/저가/종가 평균 반환"""
 
     url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-daily-price"
 
@@ -54,9 +54,12 @@ def get_prev_close(token, ticker):
         data = res.json()
 
         if "output" in data:
-            return int(data["output"][1]["stck_clpr"])
+            prev = data["output"][1]
+            avg = (int(prev["stck_oprc"]) + int(prev["stck_hgpr"]) +
+                   int(prev["stck_lwpr"]) + int(prev["stck_clpr"])) / 4
+            return avg
 
-        print(f"전날 종가 조회 실패, 재시도 중... ({attempt + 1}/3): {data.get('msg1', data)}")
+        print(f"전날 가격 조회 실패, 재시도 중... ({attempt + 1}/3): {data.get('msg1', data)}")
         time.sleep(1)
 
     return None

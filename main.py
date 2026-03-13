@@ -2,7 +2,7 @@ import time
 from datetime import datetime
 
 from api import get_token
-from data import get_price, get_prev_close
+from data import get_price, get_prev_avg
 from strategy import check_signal
 from trade import buy_stock, sell_stock
 from account import get_holdings
@@ -21,7 +21,7 @@ token = get_token()
 # 종목별 기준가격 초기화
 base_prices = {}
 for ticker, name in TICKERS.items():
-    base_prices[ticker] = get_prev_close(token, ticker)
+    base_prices[ticker] = get_prev_avg(token, ticker)
     time.sleep(0.5)  # API 호출 간격
 
 # 잔고 한 번만 조회해서 전체 보유여부 확인
