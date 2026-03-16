@@ -35,22 +35,23 @@ def get_balance(token):
 
 
 def get_holdings(token, tickers):
-    """잔고를 한 번만 조회해서 여러 종목의 보유 여부를 딕셔너리로 반환"""
+    """잔고를 한 번만 조회해서 여러 종목의 보유 수량/매입평균가를 딕셔너리로 반환"""
 
     data = get_balance(token)
     stocks = data.get("output1", [])
 
-    holdings = {ticker: False for ticker in tickers}
+    holdings = {ticker: {"qty": 0, "avg_price": 0} for ticker in tickers}
 
     for stock in stocks:
         code = stock.get("pdno")
         qty = int(stock.get("hldg_qty", 0))
+        avg_price = int(float(stock.get("pchs_avg_pric", 0)))
         if code in holdings and qty > 0:
-            holdings[code] = True
-            print(f"보유 확인: {code} {qty}주")
+            holdings[code] = {"qty": qty, "avg_price": avg_price}
+            print(f"보유 확인: {code} {qty}주 (매입평균가: {avg_price:,}원)")
 
     for ticker in tickers:
-        if not holdings[ticker]:
+        if holdings[ticker]["qty"] == 0:
             print(f"미보유 확인: {ticker}")
 
     return holdings
