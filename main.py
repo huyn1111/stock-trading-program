@@ -111,6 +111,15 @@ _fb_list = list(FALLBACK_TICKERS.keys())
 _fb_idx  = 0
 FALLBACK_BATCH = 50  # 10초 사이클당 체크할 폴백 종목 수
 
+# ── 모멘텀 전략 상태 ──────────────────────────────────────────────────────────
+MOMENTUM_TOP_N     = 10   # 보유 종목 수
+MOMENTUM_LOOKBACK  = 20   # 수익률 계산 기준 영업일
+MOMENTUM_REBALANCE = 40   # 리밸런싱 주기 (영업일)
+MOMENTUM_STOPLOSS  = -15  # 손절 기준 수익률 (%)
+
+momentum_portfolio: set[str] = set()         # 현재 보유 중인 모멘텀 종목
+momentum_trading_days = MOMENTUM_REBALANCE   # 첫 실행 시 즉시 리밸런싱
+
 def _reset_fallback_daily():
     """장 시작 시 당일 매수 레벨 초기화."""
     fb_buy_done.clear()
@@ -147,6 +156,88 @@ def _process_rsi(ticker: str, name: str):
                 _mark_traded(ticker)
     except Exception as e:
         print(f"  [{name}] RSI 처리 오류: {e}")
+
+def _calc_momentum_returns(universe: dict) -> dict[str, float]:
+    """유니버스 종목들의 lookback 기간 수익률 병렬 계산."""
+    returns: dict[str, float] = {}
+
+    def _fetch(ticker: str):
+        rows = get_recent_ohlcv(token, ticker, n=MOMENTUM_LOOKBACK + 5)
+        if len(rows) >= MOMENTUM_LOOKBACK + 1:
+            p_now  = rows[-1]["close"]
+            p_prev = rows[-(MOMENTUM_LOOKBACK + 1)]["close"]
+            if p_prev > 0:
+                returns[ticker] = (p_now - p_prev) / p_prev
+
+    with ThreadPoolExecutor(max_workers=RSI_WORKERS) as pool:
+        futures = [pool.submit(_fetch, t) for t in universe]
+        for f in as_completed(futures):
+            pass
+    return returns
+
+
+def _run_momentum_rebalance():
+    """모멘텀 리밸런싱: top-N 선정 → 탈락 종목 매도 → 신규 종목 매수."""
+    global momentum_trading_days
+
+    universe = FALLBACK_TICKERS
+    if not universe:
+        print("  [모멘텀] 유니버스 없음, 건너뜀")
+        return
+
+    print(f"\n  [모멘텀] 리밸런싱 시작 ({len(universe)}종목 수익률 계산 중...)")
+    returns = _calc_momentum_returns(universe)
+
+    if len(returns) < MOMENTUM_TOP_N:
+        print(f"  [모멘텀] 데이터 부족 ({len(returns)}종목), 건너뜀")
+        return
+
+    ranked     = sorted(returns, key=lambda t: returns[t], reverse=True)
+    target     = set(ranked[:MOMENTUM_TOP_N])
+    current    = set(momentum_portfolio)
+    sell_list  = current - target
+    buy_list   = target - current
+
+    top_str = ", ".join(
+        f"{universe.get(t, t)}({returns[t]*100:+.1f}%)" for t in ranked[:MOMENTUM_TOP_N]
+    )
+    print(f"  [모멘텀] 상위 {MOMENTUM_TOP_N}: {top_str}")
+    print(f"  [모멘텀] 매도 {len(sell_list)}종목 / 매수 {len(buy_list)}종목")
+
+    # 탈락 종목 매도
+    for ticker in sell_list:
+        h    = holdings[ticker]
+        qty  = h["qty"]
+        name = universe.get(ticker, ticker)
+        if qty > 0:
+            with _trade_lock:
+                if _can_trade(ticker):
+                    print(f"  [SELL] [{name}] 모멘텀 리밸런싱 매도 ({qty}주)")
+                    sell_stock(token, ticker, qty=qty)
+                    holdings[ticker]["qty"]       = 0
+                    holdings[ticker]["avg_price"] = 0
+                    _mark_traded(ticker)
+        momentum_portfolio.discard(ticker)
+
+    # 신규 종목 매수 (1주씩 동일비중)
+    for ticker in buy_list:
+        name  = universe.get(ticker, ticker)
+        price = get_price(token, ticker)
+        if not price:
+            continue
+        with _trade_lock:
+            if _can_trade(ticker) and holdings[ticker]["qty"] == 0:
+                print(f"  [BUY]  [{name}] 모멘텀 매수 1주")
+                buy_stock(token, ticker, qty=1)
+                holdings[ticker]["qty"]       = 1
+                holdings[ticker]["avg_price"] = price
+                _mark_traded(ticker)
+                momentum_portfolio.add(ticker)
+
+    momentum_trading_days = 0
+    held_names = ", ".join(universe.get(t, t) for t in momentum_portfolio)
+    print(f"  [모멘텀] 리밸런싱 완료. 보유: {held_names or '없음'}")
+
 
 def _process_fallback(ticker: str, name: str):
     """폴백 종목 매수/매도 판단 + 실행."""
@@ -287,6 +378,12 @@ while True:
                 pass
         print(f"  폴백 종가 수집 완료: {len(fb_prev_close)}종목")
 
+        # ④ 모멘텀: 거래일 카운트 + 40일마다 리밸런싱
+        momentum_trading_days += 1
+        print(f"  모멘텀 거래일 카운트: {momentum_trading_days}/{MOMENTUM_REBALANCE}")
+        if momentum_trading_days >= MOMENTUM_REBALANCE:
+            _run_momentum_rebalance()
+
         market_open_done_date = today
         print(f"[{now.strftime('%H:%M')}] ══ 장 시작 처리 완료 ══\n")
 
@@ -320,17 +417,36 @@ while True:
                 print(f"  [{name}] VB 모니터링 오류: {e}")
             time.sleep(0.3)
 
+        # ── 모멘텀 종목 손절 체크 ───────────────────────────────────────────
+        for ticker in list(momentum_portfolio):
+            h = holdings[ticker]
+            if h["qty"] > 0 and h["avg_price"] > 0:
+                price = get_price(token, ticker)
+                if price:
+                    pnl = (price - h["avg_price"]) / h["avg_price"] * 100
+                    if pnl <= MOMENTUM_STOPLOSS:
+                        name = FALLBACK_TICKERS.get(ticker, ticker)
+                        with _trade_lock:
+                            if _can_trade(ticker):
+                                print(f"  [SELL] [{name}] 모멘텀 손절 {pnl:+.1f}% ({h['qty']}주)")
+                                sell_stock(token, ticker, qty=h["qty"])
+                                holdings[ticker]["qty"]       = 0
+                                holdings[ticker]["avg_price"] = 0
+                                momentum_portfolio.discard(ticker)
+                                _mark_traded(ticker)
+
         # ── 폴백 종목 로테이션 체크 ─────────────────────────────────────────
         if _fb_list and fb_prev_close:
-            # 보유 중인 폴백 종목은 매 사이클 항상 체크
-            held_fb = [t for t in _fb_list if holdings[t]["qty"] > 0]
+            # 보유 중인 폴백 종목은 매 사이클 항상 체크 (모멘텀 종목 제외)
+            held_fb = [t for t in _fb_list
+                       if holdings[t]["qty"] > 0 and t not in momentum_portfolio]
             for ticker in held_fb:
                 _process_fallback(ticker, FALLBACK_TICKERS[ticker])
 
-            # 미보유 종목은 FALLBACK_BATCH 단위로 순환
+            # 미보유 종목은 FALLBACK_BATCH 단위로 순환 (모멘텀 종목 제외)
             batch = _fb_list[_fb_idx: _fb_idx + FALLBACK_BATCH]
             for ticker in batch:
-                if holdings[ticker]["qty"] == 0:
+                if holdings[ticker]["qty"] == 0 and ticker not in momentum_portfolio:
                     _process_fallback(ticker, FALLBACK_TICKERS[ticker])
             _fb_idx = (_fb_idx + FALLBACK_BATCH) % len(_fb_list)
 
