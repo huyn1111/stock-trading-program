@@ -4,6 +4,7 @@ RSI(Relative Strength Index) 전략.
 - RSI가 oversold 미만에서 oversold 이상으로 올라올 때 → BUY
 - RSI가 overbought 초과에서 overbought 이하로 내려올 때 → SELL
 """
+from __future__ import annotations
 
 
 class RSIStrategy:

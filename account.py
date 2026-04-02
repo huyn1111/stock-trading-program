@@ -50,8 +50,5 @@ def get_holdings(token, tickers):
             holdings[code] = {"qty": qty, "avg_price": avg_price}
             print(f"보유 확인: {code} {qty}주 (매입평균가: {avg_price:,}원)")
 
-    for ticker in tickers:
-        if holdings[ticker]["qty"] == 0:
-            print(f"미보유 확인: {ticker}")
 
     return holdings
