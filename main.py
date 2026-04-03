@@ -62,7 +62,7 @@ def print_holdings(label="보유 현황"):
         return
     for ticker, name in held:
         h     = holdings[ticker]
-        price = get_price(token, ticker)
+        price = _api(get_price, token, ticker)
         if price and h["avg_price"] > 0:
             pnl = f"{(price - h['avg_price']) / h['avg_price'] * 100:+.2f}%"
         else:
@@ -94,6 +94,16 @@ vb_cache_date: dict[str, str]  = {}
 TRADE_COOLDOWN = 300
 last_trade_time: dict[str, float] = {}
 _trade_lock = threading.Lock()
+
+# KIS API 초당 20건 제한 → 동시 호출 3개 + 0.15s 대기 = 최대 ~5건/초
+_api_sem = threading.Semaphore(3)
+
+def _api(fn, *args, **kwargs):
+    """모든 API 호출을 이 함수로 감싸 rate limit 준수."""
+    with _api_sem:
+        result = fn(*args, **kwargs)
+        time.sleep(0.15)
+    return result
 
 def _can_trade(ticker: str) -> bool:
     return time.time() - last_trade_time.get(ticker, 0) >= TRADE_COOLDOWN
@@ -127,7 +137,7 @@ def _reset_fallback_daily():
 def _fetch_fb_prev_close(ticker: str):
     """폴백 종목의 전날 종가를 API로 조회."""
     try:
-        rows = get_recent_ohlcv(token, ticker)
+        rows = _api(get_recent_ohlcv, token, ticker)
         if rows:
             fb_prev_close[ticker] = rows[-1]["close"]
     except Exception:
@@ -136,7 +146,7 @@ def _fetch_fb_prev_close(ticker: str):
 def _process_rsi(ticker: str, name: str):
     """RSI 신호 판단 + 매매 (스레드용)."""
     try:
-        ohlcv   = get_recent_ohlcv(token, ticker)
+        ohlcv   = _api(get_recent_ohlcv, token, ticker)
         holding = holdings[ticker]["qty"] > 0
         signal  = check_rsi_signal(ticker, ohlcv, holding)
 
@@ -162,7 +172,7 @@ def _calc_momentum_returns(universe: dict) -> dict[str, float]:
     returns: dict[str, float] = {}
 
     def _fetch(ticker: str):
-        rows = get_recent_ohlcv(token, ticker, n=MOMENTUM_LOOKBACK + 5)
+        rows = _api(get_recent_ohlcv, token, ticker, n=MOMENTUM_LOOKBACK + 5)
         if len(rows) >= MOMENTUM_LOOKBACK + 1:
             p_now  = rows[-1]["close"]
             p_prev = rows[-(MOMENTUM_LOOKBACK + 1)]["close"]
@@ -222,7 +232,7 @@ def _run_momentum_rebalance():
     # 신규 종목 매수 (1주씩 동일비중)
     for ticker in buy_list:
         name  = universe.get(ticker, ticker)
-        price = get_price(token, ticker)
+        price = _api(get_price, token, ticker)
         if not price:
             continue
         with _trade_lock:
@@ -246,7 +256,7 @@ def _process_fallback(ticker: str, name: str):
         return
 
     try:
-        price = get_price(token, ticker)
+        price = _api(get_price, token, ticker)
         if not price:
             return
 
@@ -351,8 +361,8 @@ while True:
                     _mark_traded(ticker)
                     time.sleep(0.3)
 
-                ohlcv      = get_recent_ohlcv(token, ticker)
-                today_open = get_today_open(token, ticker)
+                ohlcv      = _api(get_recent_ohlcv, token, ticker)
+                today_open = _api(get_today_open, token, ticker)
                 if ohlcv and today_open:
                     prev   = ohlcv[-1]
                     k      = VB_STRATEGIES[ticker].k
@@ -395,7 +405,7 @@ while True:
             if holdings[ticker]["qty"] > 0 or not _can_trade(ticker):
                 continue
             try:
-                price = get_price(token, ticker)
+                price = _api(get_price, token, ticker)
                 if price is None:
                     continue
                 cache  = vb_cache[ticker]
@@ -421,7 +431,7 @@ while True:
         for ticker in list(momentum_portfolio):
             h = holdings[ticker]
             if h["qty"] > 0 and h["avg_price"] > 0:
-                price = get_price(token, ticker)
+                price = _api(get_price, token, ticker)
                 if price:
                     pnl = (price - h["avg_price"]) / h["avg_price"] * 100
                     if pnl <= MOMENTUM_STOPLOSS:
