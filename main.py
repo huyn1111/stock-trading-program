@@ -13,6 +13,7 @@ from strategy import (RSI_STRATEGIES, VB_STRATEGIES,
                       check_rsi_signal, check_vb_signal)
 from trade import buy_stock, sell_stock
 from account import get_holdings
+from llm_check import llm_check as _llm_check_fn
 
 # ── 최적 전략 종목 로드 ───────────────────────────────────────────────────────
 _BEST_PATH = os.path.join("results", "best_strategies.json")
@@ -53,6 +54,42 @@ ALL_TICKERS = {**TICKERS, **FALLBACK_TICKERS}
 token    = get_token()
 holdings = get_holdings(token, list(ALL_TICKERS.keys()))
 
+# ── API rate limit 제어 ───────────────────────────────────────────────────────
+# KIS 가상계좌 실제 한도 ~10건/초 → 동시 2건 + 0.3s 대기 = 최대 ~6건/초
+_api_sem = threading.Semaphore(2)
+
+def _api(fn, *args, retries: int = 3, **kwargs):
+    """모든 API 호출을 이 함수로 감싸 rate limit 준수 + 자동 재시도."""
+    for attempt in range(retries):
+        with _api_sem:
+            result = fn(*args, **kwargs)
+            time.sleep(0.3)
+        if result is not None and result != []:
+            return result
+        if attempt < retries - 1:
+            time.sleep(1.0 * (attempt + 1))  # 1s, 2s 대기 후 재시도
+    return result
+
+# ── LLM 필터 (당일 종목당 1회 캐시) ─────────────────────────────────────────
+_llm_cache_date: dict[str, str] = {}
+_llm_cache_result: dict[str, bool] = {}
+
+def _llm_check(ticker: str, name: str) -> bool:
+    """뉴스 조회 → LLM 리스크 평가. True = 매수 허용, False = 매수 차단. 당일 1회만 호출."""
+    today = datetime.now().strftime("%Y%m%d")
+    if _llm_cache_date.get(ticker) == today:
+        return _llm_cache_result[ticker]
+    try:
+        allowed = _llm_check_fn(ticker, name)
+        _llm_cache_date[ticker]   = today
+        _llm_cache_result[ticker] = allowed
+        if not allowed:
+            print(f"  [BLOCK] [{name}] LLM 매수 차단", flush=True)
+        return allowed
+    except Exception as e:
+        print(f"  [{name}] LLM 필터 오류: {e} — 매수 허용", flush=True)
+        return True
+
 # ── 보유 현황 출력 함수 ───────────────────────────────────────────────────────
 def print_holdings(label="보유 현황"):
     held = [(t, n) for t, n in ALL_TICKERS.items() if holdings[t]["qty"] > 0]
@@ -79,10 +116,22 @@ def print_holdings(label="보유 현황"):
 print_holdings("초기 보유 현황")
 
 # ── 터미널 명령 리스너 ────────────────────────────────────────────────────────
+HELP_TEXT = """자산현황 : 내 현재 보유 주식을 나타냅니다.
+도움말   : 사용 가능한 명령어 목록을 표시합니다.
+"""
+
 def _cmd_listener():
     for line in sys.stdin:
-        if line.strip() == "자산현황":
+        cmd = line.strip()
+        if not cmd:
+            continue
+        if cmd == "자산현황":
             print_holdings("자산 현황")
+            sys.stdout.flush()
+        elif cmd == "도움말":
+            print(HELP_TEXT, flush=True)
+        else:
+            print(f"  알 수 없는 명령어: '{cmd}'  (도움말 입력 시 명령어 목록 확인)", flush=True)
 
 threading.Thread(target=_cmd_listener, daemon=True).start()
 
@@ -95,21 +144,18 @@ TRADE_COOLDOWN = 300
 last_trade_time: dict[str, float] = {}
 _trade_lock = threading.Lock()
 
-# KIS API 초당 20건 제한 → 동시 호출 3개 + 0.15s 대기 = 최대 ~5건/초
-_api_sem = threading.Semaphore(3)
-
-def _api(fn, *args, **kwargs):
-    """모든 API 호출을 이 함수로 감싸 rate limit 준수."""
-    with _api_sem:
-        result = fn(*args, **kwargs)
-        time.sleep(0.15)
-    return result
-
 def _can_trade(ticker: str) -> bool:
+    """매수 쿨다운 체크 (5분). 매도는 쿨다운 없음."""
     return time.time() - last_trade_time.get(ticker, 0) >= TRADE_COOLDOWN
 
 def _mark_traded(ticker: str):
     last_trade_time[ticker] = time.time()
+
+# ── RSI 장 중 실시간 상태 ────────────────────────────────────────────────────
+rsi_ohlcv_cache: dict[str, list] = {}   # {ticker: ohlcv_rows} — 장 시작 시 캐시
+_rsi_intra_list = list(RSI_TICKERS.keys())
+_rsi_intra_idx  = 0
+RSI_INTRA_BATCH = 30  # 10초 사이클당 체크 종목 수 (전체 순환 ~5분)
 
 # ── 폴백 전략 상태 ────────────────────────────────────────────────────────────
 # 전날 종가 캐시: {ticker: prev_close}
@@ -144,9 +190,12 @@ def _fetch_fb_prev_close(ticker: str):
         pass
 
 def _process_rsi(ticker: str, name: str):
-    """RSI 신호 판단 + 매매 (스레드용)."""
+    """RSI 신호 판단 + 매매 (장 시작 1회, 스레드용). OHLCV도 캐시."""
     try:
-        ohlcv   = _api(get_recent_ohlcv, token, ticker)
+        ohlcv = _api(get_recent_ohlcv, token, ticker)
+        if ohlcv:
+            rsi_ohlcv_cache[ticker] = ohlcv  # 장 중 실시간 체크용 캐시
+
         holding = holdings[ticker]["qty"] > 0
         signal  = check_rsi_signal(ticker, ohlcv, holding)
 
@@ -154,18 +203,59 @@ def _process_rsi(ticker: str, name: str):
             if not _can_trade(ticker):
                 return
             if signal == "BUY":
+                cur = ohlcv[-1]["close"] if ohlcv else 0
+                if not _llm_check(ticker, name):
+                    return
                 print(f"  [BUY]  [{name}] RSI 매수")
-                buy_stock(token, ticker, qty=1)
+                buy_stock(token, ticker, qty=1, price=cur)
                 holdings[ticker]["qty"] += 1
                 _mark_traded(ticker)
             elif signal == "SELL":
+                cur = ohlcv[-1]["close"] if ohlcv else 0
                 print(f"  [SELL] [{name}] RSI 매도")
-                sell_stock(token, ticker, qty=holdings[ticker]["qty"])
+                sell_stock(token, ticker, qty=holdings[ticker]["qty"], price=cur)
                 holdings[ticker]["qty"]       = 0
                 holdings[ticker]["avg_price"] = 0
                 _mark_traded(ticker)
     except Exception as e:
         print(f"  [{name}] RSI 처리 오류: {e}")
+
+
+def _process_rsi_intraday(ticker: str, name: str):
+    """장 중 현재가로 RSI 재계산 → 크로스오버 발생 시 매매."""
+    base = rsi_ohlcv_cache.get(ticker)
+    if not base:
+        return
+    try:
+        price = _api(get_price, token, ticker)
+        if not price:
+            return
+
+        # 현재가를 오늘 캔들로 추가해 실시간 RSI 계산
+        today     = datetime.now().strftime("%Y%m%d")
+        live_ohlcv = base + [{"date": today, "open": price, "high": price,
+                               "low": price, "close": price}]
+        holding = holdings[ticker]["qty"] > 0
+        signal  = check_rsi_signal(ticker, live_ohlcv, holding)
+
+        with _trade_lock:
+            if not _can_trade(ticker):
+                return
+            if signal == "BUY":
+                if not _llm_check(ticker, name):
+                    return
+                print(f"[{datetime.now().strftime('%H:%M')}] [BUY]  [{name}] RSI 장중 매수")
+                buy_stock(token, ticker, qty=1, price=price)
+                holdings[ticker]["qty"] += 1
+                _mark_traded(ticker)
+            elif signal == "SELL":
+                print(f"[{datetime.now().strftime('%H:%M')}] [SELL] [{name}] RSI 장중 매도")
+                sell_stock(token, ticker, qty=holdings[ticker]["qty"], price=price)
+                holdings[ticker]["qty"]       = 0
+                holdings[ticker]["avg_price"] = 0
+                _mark_traded(ticker)
+    except Exception as e:
+        print(f"  [{name}] RSI 장중 처리 오류: {e}")
 
 def _calc_momentum_returns(universe: dict) -> dict[str, float]:
     """유니버스 종목들의 lookback 기간 수익률 병렬 계산."""
@@ -222,8 +312,9 @@ def _run_momentum_rebalance():
         if qty > 0:
             with _trade_lock:
                 if _can_trade(ticker):
+                    cur = _api(get_price, token, ticker) or 0
                     print(f"  [SELL] [{name}] 모멘텀 리밸런싱 매도 ({qty}주)")
-                    sell_stock(token, ticker, qty=qty)
+                    sell_stock(token, ticker, qty=qty, price=cur)
                     holdings[ticker]["qty"]       = 0
                     holdings[ticker]["avg_price"] = 0
                     _mark_traded(ticker)
@@ -237,8 +328,10 @@ def _run_momentum_rebalance():
             continue
         with _trade_lock:
             if _can_trade(ticker) and holdings[ticker]["qty"] == 0:
+                if not _llm_check(ticker, name):
+                    continue
                 print(f"  [BUY]  [{name}] 모멘텀 매수 1주")
-                buy_stock(token, ticker, qty=1)
+                buy_stock(token, ticker, qty=1, price=price)
                 holdings[ticker]["qty"]       = 1
                 holdings[ticker]["avg_price"] = price
                 _mark_traded(ticker)
@@ -272,24 +365,21 @@ def _process_fallback(ticker: str, name: str):
                     return
                 if pnl_pct <= -20:
                     print(f"  [SELL] [{name}] 폴백 손절 {pnl_pct:+.1f}% ({qty}주 전량)")
-                    sell_stock(token, ticker, qty=qty)
+                    sell_stock(token, ticker, qty=qty, price=price)
                     holdings[ticker]["qty"]       = 0
                     holdings[ticker]["avg_price"] = 0
-                    _mark_traded(ticker)
                 elif pnl_pct >= 10:
                     print(f"  [SELL] [{name}] 폴백 익절(10%) {pnl_pct:+.1f}% ({qty}주 전량)")
-                    sell_stock(token, ticker, qty=qty)
+                    sell_stock(token, ticker, qty=qty, price=price)
                     holdings[ticker]["qty"]       = 0
                     holdings[ticker]["avg_price"] = 0
-                    _mark_traded(ticker)
                 elif pnl_pct >= 5:
                     half = max(1, qty // 2)
                     print(f"  [SELL] [{name}] 폴백 익절(5%) {pnl_pct:+.1f}% ({half}주 절반매도)")
-                    sell_stock(token, ticker, qty=half)
+                    sell_stock(token, ticker, qty=half, price=price)
                     holdings[ticker]["qty"] -= half
                     if holdings[ticker]["qty"] == 0:
                         holdings[ticker]["avg_price"] = 0
-                    _mark_traded(ticker)
             return
 
         # ── 미보유: 매수 판단 (전날 종가 대비 하락률) ─────────────────────
@@ -298,8 +388,10 @@ def _process_fallback(ticker: str, name: str):
 
         with _trade_lock:
             if 10 not in done and drop_pct >= 10:
+                if not _llm_check(ticker, name):
+                    return
                 print(f"  [BUY]  [{name}] 폴백 매수 -10% ({drop_pct:.1f}%, 3주)")
-                buy_stock(token, ticker, qty=3)
+                buy_stock(token, ticker, qty=3, price=price)
                 holdings[ticker]["qty"]       = (holdings[ticker]["qty"] or 0) + 3
                 holdings[ticker]["avg_price"] = price
                 fb_buy_done.setdefault(ticker, set()).add(10)
@@ -307,16 +399,20 @@ def _process_fallback(ticker: str, name: str):
                 fb_buy_done[ticker].add(5)
                 _mark_traded(ticker)
             elif 7 not in done and drop_pct >= 7:
+                if not _llm_check(ticker, name):
+                    return
                 print(f"  [BUY]  [{name}] 폴백 매수 -7% ({drop_pct:.1f}%, 2주)")
-                buy_stock(token, ticker, qty=2)
+                buy_stock(token, ticker, qty=2, price=price)
                 holdings[ticker]["qty"]       = (holdings[ticker]["qty"] or 0) + 2
                 holdings[ticker]["avg_price"] = price
                 fb_buy_done.setdefault(ticker, set()).add(7)
                 fb_buy_done[ticker].add(5)
                 _mark_traded(ticker)
             elif 5 not in done and drop_pct >= 5:
+                if not _llm_check(ticker, name):
+                    return
                 print(f"  [BUY]  [{name}] 폴백 매수 -5% ({drop_pct:.1f}%, 1주)")
-                buy_stock(token, ticker, qty=1)
+                buy_stock(token, ticker, qty=1, price=price)
                 holdings[ticker]["qty"]       = (holdings[ticker]["qty"] or 0) + 1
                 holdings[ticker]["avg_price"] = price
                 fb_buy_done.setdefault(ticker, set()).add(5)
@@ -354,8 +450,9 @@ while True:
         for ticker, name in VB_TICKERS.items():
             try:
                 if holdings[ticker]["qty"] > 0 and _can_trade(ticker):
+                    open_price = _api(get_today_open, token, ticker) or 0
                     print(f"  [SELL] [{name}] VB 시초가 매도")
-                    sell_stock(token, ticker, qty=holdings[ticker]["qty"])
+                    sell_stock(token, ticker, qty=holdings[ticker]["qty"], price=open_price)
                     holdings[ticker]["qty"]       = 0
                     holdings[ticker]["avg_price"] = 0
                     _mark_traded(ticker)
@@ -418,8 +515,10 @@ while True:
                     holding       = False,
                 )
                 if signal == "BUY":
+                    if not _llm_check(ticker, name):
+                        continue
                     print(f"[{now.strftime('%H:%M')}] [BUY]  [{name}] VB 매수 (목표가 {cache['target']:,.0f}원 돌파)")
-                    buy_stock(token, ticker, qty=1)
+                    buy_stock(token, ticker, qty=1, price=price)
                     holdings[ticker]["qty"]       = 1
                     holdings[ticker]["avg_price"] = price
                     _mark_traded(ticker)
@@ -439,11 +538,18 @@ while True:
                         with _trade_lock:
                             if _can_trade(ticker):
                                 print(f"  [SELL] [{name}] 모멘텀 손절 {pnl:+.1f}% ({h['qty']}주)")
-                                sell_stock(token, ticker, qty=h["qty"])
+                                sell_stock(token, ticker, qty=h["qty"], price=price)
                                 holdings[ticker]["qty"]       = 0
                                 holdings[ticker]["avg_price"] = 0
                                 momentum_portfolio.discard(ticker)
                                 _mark_traded(ticker)
+
+        # ── RSI 장 중 실시간 체크 (배치 순환) ──────────────────────────────
+        if _rsi_intra_list and rsi_ohlcv_cache:
+            batch = _rsi_intra_list[_rsi_intra_idx: _rsi_intra_idx + RSI_INTRA_BATCH]
+            for ticker in batch:
+                _process_rsi_intraday(ticker, RSI_TICKERS[ticker])
+            _rsi_intra_idx = (_rsi_intra_idx + RSI_INTRA_BATCH) % len(_rsi_intra_list)
 
         # ── 폴백 종목 로테이션 체크 ─────────────────────────────────────────
         if _fb_list and fb_prev_close:

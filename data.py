@@ -25,8 +25,7 @@ def get_price(token, ticker):
     data = res.json()
 
     if "output" not in data:
-        print(f"현재가 조회 실패: {data.get('msg1', data)}")
-        return None
+        return None  # 호출부(_api)에서 재시도 처리
 
     return int(data["output"]["stck_prpr"])
 
@@ -91,8 +90,7 @@ def get_recent_ohlcv(token: str, ticker: str, n: int = 30) -> list[dict]:
     data = res.json()
 
     if "output2" not in data:
-        print(f"OHLCV 조회 실패: {data.get('msg1', data)}")
-        return []
+        return []  # 호출부(_api)에서 재시도 처리
 
     rows = []
     for row in data["output2"]:
